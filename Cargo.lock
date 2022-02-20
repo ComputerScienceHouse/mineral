@@ -688,6 +688,7 @@ name = "mineral"
 version = "0.1.0"
 dependencies = [
  "gtk4",
+ "once_cell",
  "reqwest",
  "serde",
  "serde_json",
