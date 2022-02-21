@@ -1,21 +1,27 @@
-use gtk::prelude::*;
+use crate::glib::{
+  clone, MainContext, ParamFlags, ParamSpec, ParamSpecInt64, ParamSpecString, Value,
+  PRIORITY_DEFAULT,
+};
+use clap::Arg;
 use gatekeeper_members::{GateKeeperMemberListener, RealmInfo};
-use gtk::subclass::prelude::*;
-use std::cell::{Cell, RefCell};
-use gtk::subclass::prelude::ObjectSubclass;
-use gtk::{gio, glib, Application, ApplicationWindow, Button, ScrolledWindow, GridView, SignalListItemFactory, SingleSelection, PolicyType, CenterBox, Box, Orientation, Label, Align};
 use gio::ApplicationFlags;
 use glib::object::Object;
-use crate::glib::{MainContext, PRIORITY_DEFAULT, clone, ParamSpecInt64, ParamFlags, ParamSpec, Value, ParamSpecString};
-use serde::{Serialize, Deserialize};
-use serde_json::json;
-use std::time::Duration;
-use std::thread;
-use std::env;
-use reqwest::StatusCode;
-use clap::Arg;
+use gtk::prelude::*;
+use gtk::subclass::prelude::ObjectSubclass;
+use gtk::subclass::prelude::*;
+use gtk::{
+  gio, glib, Align, Application, ApplicationWindow, Box, Button, CenterBox, GridView, Label,
+  Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, SingleSelection,
+};
 use libgatekeeper_sys::Nfc;
+use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::cell::{Cell, RefCell};
+use std::env;
 use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Default)]
 pub struct SlotObjectData {
@@ -38,35 +44,28 @@ impl ObjectImpl for SlotObjectData {
     use once_cell::sync::Lazy;
 
     static PROPERTIES: Lazy<Vec<glib::ParamSpec>> = Lazy::new(|| {
-      vec![ParamSpecInt64::new(
-        "slot",
-        "slot",
-        "slot",
-        i64::MIN,
-        i64::MAX,
-        0,
-        ParamFlags::READWRITE,
-      ), ParamSpecInt64::new(
-        "cost",
-        "cost",
-        "cost",
-        i64::MIN,
-        i64::MAX,
-        0,
-        ParamFlags::READWRITE,
-      ), ParamSpecString::new(
-        "name",
-        "name",
-        "name",
-        None,
-        ParamFlags::READWRITE,
-      ), ParamSpecString::new(
-        "machine",
-        "machine",
-        "machine",
-        None,
-        ParamFlags::READWRITE,
-      )]
+      vec![
+        ParamSpecInt64::new(
+          "slot",
+          "slot",
+          "slot",
+          i64::MIN,
+          i64::MAX,
+          0,
+          ParamFlags::READWRITE,
+        ),
+        ParamSpecInt64::new(
+          "cost",
+          "cost",
+          "cost",
+          i64::MIN,
+          i64::MAX,
+          0,
+          ParamFlags::READWRITE,
+        ),
+        ParamSpecString::new("name", "name", "name", None, ParamFlags::READWRITE),
+        ParamSpecString::new("machine", "machine", "machine", None, ParamFlags::READWRITE),
+      ]
     });
 
     PROPERTIES.as_ref()
@@ -86,16 +85,16 @@ impl ObjectImpl for SlotObjectData {
     match pspec.name() {
       "cost" => {
         self.cost.replace(value.get().unwrap());
-      },
+      }
       "slot" => {
         self.slot.replace(value.get().unwrap());
-      },
+      }
       "name" => {
         self.name.replace(value.get().unwrap());
-      },
+      }
       "machine" => {
         self.machine.replace(value.get().unwrap());
-      },
+      }
       _ => unimplemented!(),
     };
   }
@@ -117,8 +116,9 @@ impl SlotObject {
       ("slot", &slot.number),
       ("machine", &machine.name.to_string()),
       ("name", &slot.item.name),
-      ("cost", &slot.item.price)
-    ]).expect("Failed to create `SlotObject`.")
+      ("cost", &slot.item.price),
+    ])
+    .expect("Failed to create `SlotObject`.")
   }
 }
 
@@ -140,14 +140,16 @@ fn main() {
       .version("0.1.0")
       .author("Mary Strodl <ipadlover8322@gmail.com>")
       .about("Touch screen drink client")
-      .arg(Arg::new("DEVICE")
-           .help("Device connection string (e.g. 'pn532_uart:/dev/ttyUSB0')")
-           .required(true)
-           .index(1));
+      .arg(
+        Arg::new("DEVICE")
+          .help("Device connection string (e.g. 'pn532_uart:/dev/ttyUSB0')")
+          .required(true)
+          .index(1),
+      );
 
     let matches = command.get_matches_from(cmd_rx.recv().unwrap().arguments());
-    let conn_str = matches.value_of("DEVICE").unwrap().to_string(); 
-    
+    let conn_str = matches.value_of("DEVICE").unwrap().to_string();
+
     build_ui(app, conn_str);
   });
   // Run the application
@@ -192,7 +194,9 @@ pub struct Item {
 
 fn build_ui(app: &Application, conn_str: std::string::String) {
   let displayable_machines: Vec<i64> = env::var("DISPLAYABLE_MACHINES")
-    .unwrap().to_string().split(",")
+    .unwrap()
+    .to_string()
+    .split(",")
     .map(|id| id.parse::<i64>().unwrap())
     .collect();
   let endpoint = "https://drink.csh.rit.edu";
@@ -207,7 +211,8 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     loop {
       println!("Trying to get drink list...");
       // Get new soda!
-      let drinks = http.get(endpoint.clone().to_owned() + "/drinks")
+      let drinks = http
+        .get(endpoint.clone().to_owned() + "/drinks")
         .header("X-Auth-Token", secret.clone())
         .send();
       println!("Got updated drink list!");
@@ -245,7 +250,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
         drink_model.splice(0, drink_model.n_items(), &slot_objects);
         Continue(true)
       }
-    )
+    ),
   );
 
   let factory = SignalListItemFactory::new();
@@ -269,14 +274,16 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     .title("Mineral")
     .child(&scrolled_window)
     .maximized(true);
-  if !env::var("DEVELOPMENT").ok().map_or(false, |value| value == "true") {
+  if !env::var("DEVELOPMENT")
+    .ok()
+    .map_or(false, |value| value == "true")
+  {
     window_builder = window_builder.fullscreened(true);
   }
   let window = window_builder.build();
 
   factory.connect_setup(move |_, list_item| {
-    let button = Button::builder()
-      .build();
+    let button = Button::builder().build();
     list_item.set_child(Some(&button));
   });
   factory.connect_bind(move |_, list_item| {
@@ -298,7 +305,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
       .expect("The child has to exist.")
       .downcast::<Button>()
       .expect("The child must be a `Button`!");
-    
+
     button.set_label(&format!("{} - {}", item_name, item_cost));
 
     button.connect_clicked(move |_button| {
@@ -309,15 +316,15 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
       let ordering_tx = ordering_tx.clone();
       thread::spawn(move || {
         let (cancel_tx, cancel_rx) = mpsc::channel();
-        ordering_tx.send(OrderingState::PleaseScan(cancel_tx)).unwrap();
+        ordering_tx
+          .send(OrderingState::PleaseScan(cancel_tx))
+          .unwrap();
         println!("Starting an order");
 
         let mut nfc = Nfc::new().unwrap();
-        let mut member_listener = GateKeeperMemberListener::new_for_realm(
-          &mut nfc,
-          conn_str.to_string(),
-          RealmInfo::Drink
-        ).unwrap();
+        let mut member_listener =
+          GateKeeperMemberListener::new_for_realm(&mut nfc, conn_str.to_string(), RealmInfo::Drink)
+            .unwrap();
 
         let uid = loop {
           let association = loop {
@@ -334,23 +341,29 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
             Ok(user) => user,
             Err(_) => {
               eprintln!("Couldn't fetch user for association {}!", association);
-              continue
+              continue;
             }
           };
 
-          break user["user"]["uid"].as_str().unwrap().to_string()
+          break user["user"]["uid"].as_str().unwrap().to_string();
         };
-        ordering_tx.send(OrderingState::Vending(
-          format!("Dropping {}...", item_name))).unwrap();
+        ordering_tx
+          .send(OrderingState::Vending(format!("Dropping {}...", item_name)))
+          .unwrap();
 
         let secret = env::var("MACHINE_SECRET").unwrap().to_string();
         let http = reqwest::blocking::Client::new();
         println!("Dropping a drink!");
-        let res = http.post(endpoint.clone().to_owned() + "/drinks/drop")
+        let res = http
+          .post(endpoint.clone().to_owned() + "/drinks/drop")
           .header("X-Auth-Token", secret.clone())
-          .header("X-User-Info", &json!({
-            "preferred_username": uid,
-          }).to_string())
+          .header(
+            "X-User-Info",
+            &json!({
+              "preferred_username": uid,
+            })
+            .to_string(),
+          )
           .json(&json!({
             "machine": machine_id.clone(),
             "slot": slot_id,
@@ -359,18 +372,29 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
         println!("Looks like we got a response");
         match res {
           Ok(res) => match res.status() {
-            StatusCode::OK => ordering_tx.send(OrderingState::Dropped(
-              format!("Dropped {} for {} credits. Enjoy!", item_name, item_cost))).unwrap(),
-            code =>
-              ordering_tx.send(OrderingState::Failed(format!(
-                "Error: Got a {} response from the server. Try again later", code)
-              )).unwrap(),
+            StatusCode::OK => ordering_tx
+              .send(OrderingState::Dropped(format!(
+                "Dropped {} for {} credits. Enjoy!",
+                item_name, item_cost
+              )))
+              .unwrap(),
+            code => ordering_tx
+              .send(OrderingState::Failed(format!(
+                "Error: Got a {} response from the server. Try again later",
+                code
+              )))
+              .unwrap(),
           },
           Err(err) => {
-            eprintln!("Failed to drop slot {} from {}: {:?}",
-                      slot_id, machine_id.clone(), err);
-            ordering_tx.send(OrderingState::Failed(
-              format!("Failed to drop: {:?}", err))).unwrap()
+            eprintln!(
+              "Failed to drop slot {} from {}: {:?}",
+              slot_id,
+              machine_id.clone(),
+              err
+            );
+            ordering_tx
+              .send(OrderingState::Failed(format!("Failed to drop: {:?}", err)))
+              .unwrap()
           }
         };
         println!("I think we dropped! Waiting a bit to let the user read");
@@ -384,9 +408,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     });
   });
 
-  let info_box = CenterBox::builder()
-    .hexpand(true)
-    .build();
+  let info_box = CenterBox::builder().hexpand(true).build();
 
   ordering_rx.attach(
     None,
@@ -432,7 +454,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
         }
         Continue(true)
       }
-    )
+    ),
   );
 
   // Present window
