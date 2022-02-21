@@ -1,8 +1,10 @@
 use gtk::prelude::*;
+use gatekeeper_members::GateKeeperMemberListener;
 use gtk::subclass::prelude::*;
 use std::cell::{Cell, RefCell};
 use gtk::subclass::prelude::ObjectSubclass;
-use gtk::{gio, glib, Application, ApplicationWindow, Button, ScrolledWindow, GridView, SignalListItemFactory, SingleSelection, PolicyType};
+use gtk::{gio, glib, Application, ApplicationWindow, Button, ScrolledWindow, GridView, SignalListItemFactory, SingleSelection, PolicyType, CenterBox, Box, Orientation, Label};
+use gio::ApplicationFlags;
 use glib::object::Object;
 use crate::glib::{MainContext, PRIORITY_DEFAULT, clone, ParamSpecInt64, ParamFlags, ParamSpec, Value, ParamSpecString};
 use serde::{Serialize, Deserialize};
@@ -11,6 +13,9 @@ use std::time::Duration;
 use std::thread;
 use std::env;
 use reqwest::StatusCode;
+use clap::Arg;
+use libgatekeeper_sys::Nfc;
+use std::sync::mpsc;
 
 #[derive(Default)]
 pub struct SlotObjectData {
@@ -18,6 +23,14 @@ pub struct SlotObjectData {
   machine: RefCell<String>,
   name: RefCell<String>,
   cost: Cell<i64>,
+}
+
+enum OrderingState {
+  PleaseScan(mpsc::Sender<()>),
+  Vending(String),
+  Failed(String),
+  Dropped(String),
+  Finished(bool),
 }
 
 impl ObjectImpl for SlotObjectData {
@@ -113,11 +126,33 @@ fn main() {
   // Create a new application
   let app = Application::builder()
     .application_id("edu.rit.csh.mineral")
+    .flags(ApplicationFlags::HANDLES_COMMAND_LINE)
     .build();
-
+  let (cmd_tx, cmd_rx) = mpsc::channel();
+  app.connect_command_line(move |app, cli| {
+    println!("Got cli!");
+    cmd_tx.send(cli.clone()).unwrap();
+    app.activate();
+    0
+  });
   // Connect to "activate" signal of `app`
-  app.connect_activate(build_ui);
+  app.connect_activate(move |app: &Application| {
+    println!("Activating");
+    let command = clap::Command::new("Mineral")
+      .version("0.1.0")
+      .author("Mary Strodl <ipadlover8322@gmail.com>")
+      .about("Touch screen drink client")
+      .arg(Arg::new("DEVICE")
+           .help("Device connection string (e.g. 'pn532_uart:/dev/ttyUSB0')")
+           .required(true)
+           .index(1));
 
+    let matches = command.get_matches_from(cmd_rx.recv().unwrap().arguments());
+    let conn_str = matches.value_of("DEVICE").unwrap().to_string(); 
+    
+    println!("Got conn!");
+    build_ui(app, conn_str);
+  });
   // Run the application
   app.run();
 }
@@ -158,7 +193,7 @@ pub struct Item {
   price: i64,
 }
 
-fn build_ui(app: &Application) {
+fn build_ui(app: &Application, conn_str: std::string::String) {
   let displayable_machines: Vec<i64> = env::var("DISPLAYABLE_MACHINES")
     .unwrap().to_string().split(",")
     .map(|id| id.parse::<i64>().unwrap())
@@ -166,6 +201,8 @@ fn build_ui(app: &Application) {
   let endpoint = "https://drink.csh.rit.edu";
   let drink_model = gio::ListStore::new(SlotObject::static_type());
   let (drinks_tx, drinks_rx) = MainContext::channel(PRIORITY_DEFAULT);
+  let (ordering_tx, ordering_rx) = MainContext::channel(PRIORITY_DEFAULT);
+  let (poll_tx, poll_rx) = mpsc::channel();
 
   thread::spawn(move || {
     let secret = env::var("MACHINE_SECRET").unwrap().to_string();
@@ -186,7 +223,9 @@ fn build_ui(app: &Application) {
       }
 
       let one_minute = Duration::from_secs(60);
-      thread::sleep(one_minute);
+      if let Ok(_) = poll_rx.recv_timeout(one_minute) {
+        println!("Fetching new data because a drink was dropped!");
+      }
     }
   });
 
@@ -213,12 +252,39 @@ fn build_ui(app: &Application) {
   );
 
   let factory = SignalListItemFactory::new();
+
+  let selection_model = SingleSelection::new(Some(&drink_model));
+  let drink_list = GridView::builder()
+    .model(&selection_model)
+    .factory(&factory)
+    .max_columns(3)
+    .build();
+
+  let scrolled_window = ScrolledWindow::builder()
+    .hscrollbar_policy(PolicyType::Never) // Disable horizontal scrolling
+    .min_content_width(360)
+    .child(&drink_list)
+    .build();
+
+  // Create a window and set the title
+  let mut window_builder = ApplicationWindow::builder()
+    .application(app)
+    .title("Mineral")
+    .child(&scrolled_window)
+    .maximized(true);
+  if !env::var("DEVELOPMENT").ok().map_or(false, |value| value == "true") {
+    window_builder = window_builder.fullscreened(true);
+  }
+  let window = window_builder.build();
+
   factory.connect_setup(move |_, list_item| {
     let button = Button::builder()
       .build();
     list_item.set_child(Some(&button));
   });
   factory.connect_bind(move |_, list_item| {
+    let ordering_tx = ordering_tx.clone();
+    let conn_str = conn_str.clone();
     let slot_object = list_item
       .item()
       .expect("Slot must exist!")
@@ -239,48 +305,132 @@ fn build_ui(app: &Application) {
     button.set_label(&format!("{} - {}", item_name, item_cost));
 
     button.connect_clicked(move |_button| {
-      println!("clicked!");
-      let secret = env::var("MACHINE_SECRET").unwrap().to_string();
-      let http = reqwest::blocking::Client::new();
-      let res = http.post(endpoint.clone().to_owned() + "/drinks/drop")
-        .header("X-Auth-Token", secret.clone())
-        .header("X-User-Info", &json!({
-          "preferred_username": "mstrodl",
-        }).to_string())
-        .json(&json!({
-          "machine": machine_id,
-          "slot": slot_id,
-        }))
-        .send();
-      match res {
-        Ok(res) => println!("Got a {} response!", res.status()),
-        Err(err) => println!(":( {:?}", err)
-      }
+      let conn_str = conn_str.clone();
+      let machine_id = machine_id.clone();
+      let item_name = item_name.clone();
+      let item_cost = item_cost.clone();
+      let ordering_tx = ordering_tx.clone();
+      thread::spawn(move || {
+        let (cancel_tx, cancel_rx) = mpsc::channel();
+        ordering_tx.send(OrderingState::PleaseScan(cancel_tx)).unwrap();
+        println!("clicked!");
+
+        let mut nfc = Nfc::new().unwrap();
+        let mut member_listener = GateKeeperMemberListener::new(&mut nfc, conn_str.to_string()).unwrap();
+
+        let uid = loop {
+          let association = loop {
+            if let Some(association) = member_listener.poll_for_user() {
+              break association;
+            }
+            if let Ok(_) = cancel_rx.recv_timeout(Duration::from_millis(250)) {
+              ordering_tx.send(OrderingState::Finished(false)).unwrap();
+              return;
+            }
+          };
+
+          let user = match member_listener.fetch_user(association.clone()) {
+            Ok(user) => user,
+            Err(_) => {
+              eprintln!("Couldn't fetch user for association {}!", association);
+              continue
+            }
+          };
+
+          break user["user"]["uid"].as_str().unwrap().to_string()
+        };
+        ordering_tx.send(OrderingState::Vending(
+          format!("Dropping {}...", item_name))).unwrap();
+
+        let secret = env::var("MACHINE_SECRET").unwrap().to_string();
+        let http = reqwest::blocking::Client::new();
+        println!("Dropping a drink!");
+        let res = http.post(endpoint.clone().to_owned() + "/drinks/drop")
+          .header("X-Auth-Token", secret.clone())
+          .header("X-User-Info", &json!({
+            "preferred_username": uid,
+          }).to_string())
+          .json(&json!({
+            "machine": machine_id.clone(),
+            "slot": slot_id,
+          }))
+          .send();
+        println!("Looks like we got a response");
+        match res {
+          Ok(res) => match res.status() {
+            StatusCode::OK => ordering_tx.send(OrderingState::Dropped(
+              format!("Dropped {} for {} credits. Enjoy!", item_name, item_cost))).unwrap(),
+            code =>
+              ordering_tx.send(OrderingState::Failed(format!(
+                "Error: Got a {} response from the server. Try again later", code)
+              )).unwrap(),
+          },
+          Err(err) => {
+            eprintln!("Failed to drop slot {} from {}: {:?}",
+                      slot_id, machine_id.clone(), err);
+            ordering_tx.send(OrderingState::Failed(
+              format!("Failed to drop: {:?}", err))).unwrap()
+          }
+        };
+        println!("I think we dropped! Waiting a bit to let the user read");
+
+        // Allow the message to show for a bit
+        thread::sleep(Duration::from_secs(5));
+
+        println!("Bailing back to menu after drop");
+        ordering_tx.send(OrderingState::Finished(true)).unwrap();
+      });
     });
   });
-  let selection_model = SingleSelection::new(Some(&drink_model));
-  let drink_list = GridView::builder()
-    .model(&selection_model)
-    .factory(&factory)
-    .max_columns(3)
+
+  let info_box = CenterBox::builder()
+    .hexpand(true)
     .build();
 
-  let scrolled_window = ScrolledWindow::builder()
-    .hscrollbar_policy(PolicyType::Never) // Disable horizontal scrolling
-    .min_content_width(360)
-    .child(&drink_list)
-    .build();
-
-  // Create a window and set the title
-  let mut window_builder = ApplicationWindow::builder()
-    .application(app)
-    .title("My GTK App")
-    .child(&scrolled_window)
-    .maximized(true);
-  if !env::var("DEVELOPMENT").ok().map_or(false, |value| value == "true") {
-    window_builder = window_builder.fullscreened(true);
-  }
-  let window = window_builder.build();
+  ordering_rx.attach(
+    None,
+    clone!(
+      @weak window => @default-return Continue(false),
+      move |state| {
+        match state {
+          OrderingState::PleaseScan(cancel_tx) => {
+            let please_scan = Box::builder()
+              .orientation(Orientation::Vertical)
+              .build();
+            please_scan.append(&Label::builder()
+                               .label("Please scan your tag!")
+                               .build());
+            let cancel_button = Button::builder()
+              .label("Cancel")
+              .build();
+            please_scan.append(&cancel_button);
+            cancel_button.connect_clicked(move |_button| {
+              cancel_tx.send(()).unwrap();
+            });
+            info_box.set_center_widget(Some(&please_scan));
+            window.set_child(Some(&info_box));
+            ()
+          },
+          OrderingState::Vending(content) |
+          OrderingState::Failed(content) |
+          OrderingState::Dropped(content) => {
+            info_box.set_center_widget(
+              Some(&Label::builder()
+                   .label(&content)
+                   .build())
+            );
+          },
+          OrderingState::Finished(poll) => {
+            window.set_child(Some(&scrolled_window));
+            if poll {
+              poll_tx.send(()).unwrap();
+            }
+          },
+        }
+        Continue(true)
+      }
+    )
+  );
 
   // Present window
   window.present();
