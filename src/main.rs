@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use gatekeeper_members::GateKeeperMemberListener;
+use gatekeeper_members::{GateKeeperMemberListener, RealmInfo};
 use gtk::subclass::prelude::*;
 use std::cell::{Cell, RefCell};
 use gtk::subclass::prelude::ObjectSubclass;
@@ -313,7 +313,11 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
         println!("Starting an order");
 
         let mut nfc = Nfc::new().unwrap();
-        let mut member_listener = GateKeeperMemberListener::new(&mut nfc, conn_str.to_string()).unwrap();
+        let mut member_listener = GateKeeperMemberListener::new_for_realm(
+          &mut nfc,
+          conn_str.to_string(),
+          RealmInfo::Drink
+        ).unwrap();
 
         let uid = loop {
           let association = loop {

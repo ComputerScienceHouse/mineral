@@ -245,9 +245,9 @@ dependencies = [
 
 [[package]]
 name = "gatekeeper-members"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfb58a40aa5641b682fe19b69fd509f76993dba1eccd1ff9cee984451d573a25"
+checksum = "61147ee796ba943e7f78b9ad46c1f4103a99a89fe5d8ccc70ed817244e60769c"
 dependencies = [
  "libgatekeeper-sys",
  "reqwest",
