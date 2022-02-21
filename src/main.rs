@@ -3,7 +3,7 @@ use gatekeeper_members::GateKeeperMemberListener;
 use gtk::subclass::prelude::*;
 use std::cell::{Cell, RefCell};
 use gtk::subclass::prelude::ObjectSubclass;
-use gtk::{gio, glib, Application, ApplicationWindow, Button, ScrolledWindow, GridView, SignalListItemFactory, SingleSelection, PolicyType, CenterBox, Box, Orientation, Label};
+use gtk::{gio, glib, Application, ApplicationWindow, Button, ScrolledWindow, GridView, SignalListItemFactory, SingleSelection, PolicyType, CenterBox, Box, Orientation, Label, Align};
 use gio::ApplicationFlags;
 use glib::object::Object;
 use crate::glib::{MainContext, PRIORITY_DEFAULT, clone, ParamSpecInt64, ParamFlags, ParamSpec, Value, ParamSpecString};
@@ -130,14 +130,12 @@ fn main() {
     .build();
   let (cmd_tx, cmd_rx) = mpsc::channel();
   app.connect_command_line(move |app, cli| {
-    println!("Got cli!");
     cmd_tx.send(cli.clone()).unwrap();
     app.activate();
     0
   });
   // Connect to "activate" signal of `app`
   app.connect_activate(move |app: &Application| {
-    println!("Activating");
     let command = clap::Command::new("Mineral")
       .version("0.1.0")
       .author("Mary Strodl <ipadlover8322@gmail.com>")
@@ -150,7 +148,6 @@ fn main() {
     let matches = command.get_matches_from(cmd_rx.recv().unwrap().arguments());
     let conn_str = matches.value_of("DEVICE").unwrap().to_string(); 
     
-    println!("Got conn!");
     build_ui(app, conn_str);
   });
   // Run the application
@@ -208,12 +205,12 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     let secret = env::var("MACHINE_SECRET").unwrap().to_string();
     let http = reqwest::blocking::Client::new();
     loop {
-      println!("Trying to get soda");
+      println!("Trying to get drink list...");
       // Get new soda!
       let drinks = http.get(endpoint.clone().to_owned() + "/drinks")
         .header("X-Auth-Token", secret.clone())
         .send();
-      println!("Got them drinks");
+      println!("Got updated drink list!");
       let res = drinks.ok().and_then(|drinks| match drinks.status() {
         StatusCode::OK => drinks.json::<DrinksResponse>().ok(),
         _ => None,
@@ -224,7 +221,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
 
       let one_minute = Duration::from_secs(60);
       if let Ok(_) = poll_rx.recv_timeout(one_minute) {
-        println!("Fetching new data because a drink was dropped!");
+        println!("Expediting drink fetch because a drink was dropped!");
       }
     }
   });
@@ -313,7 +310,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
       thread::spawn(move || {
         let (cancel_tx, cancel_rx) = mpsc::channel();
         ordering_tx.send(OrderingState::PleaseScan(cancel_tx)).unwrap();
-        println!("clicked!");
+        println!("Starting an order");
 
         let mut nfc = Nfc::new().unwrap();
         let mut member_listener = GateKeeperMemberListener::new(&mut nfc, conn_str.to_string()).unwrap();
@@ -396,9 +393,11 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           OrderingState::PleaseScan(cancel_tx) => {
             let please_scan = Box::builder()
               .orientation(Orientation::Vertical)
+              .valign(Align::Center)
               .build();
             please_scan.append(&Label::builder()
                                .label("Please scan your tag!")
+                               .margin_bottom(20)
                                .build());
             let cancel_button = Button::builder()
               .label("Cancel")
