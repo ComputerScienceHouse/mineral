@@ -11,9 +11,10 @@ use gtk::subclass::prelude::ObjectSubclass;
 use gtk::subclass::prelude::*;
 use gtk::{
   gio, glib, Align, Application, ApplicationWindow, Box, Button, CenterBox, GridView, Label,
-  Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, SingleSelection,
+  Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, NoSelection,
 };
 use libgatekeeper_sys::Nfc;
+use pango::{AttrList, AttrSize};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -255,16 +256,22 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
 
   let factory = SignalListItemFactory::new();
 
-  let selection_model = SingleSelection::new(Some(&drink_model));
+  let selection_model = NoSelection::new(Some(&drink_model));
   let drink_list = GridView::builder()
     .model(&selection_model)
     .factory(&factory)
     .max_columns(3)
+    .vexpand(true)
+    .vexpand_set(true)
+    .valign(Align::Fill)
     .build();
 
   let scrolled_window = ScrolledWindow::builder()
     .hscrollbar_policy(PolicyType::Never) // Disable horizontal scrolling
     .min_content_width(360)
+    .vexpand(true)
+    .vexpand_set(true)
+    .valign(Align::Fill)
     .child(&drink_list)
     .build();
 
@@ -273,6 +280,9 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     .application(app)
     .title("Mineral")
     .child(&scrolled_window)
+    .vexpand(true)
+    .vexpand_set(true)
+    .valign(Align::Fill)
     .maximized(true);
   if !env::var("DEVELOPMENT")
     .ok()
@@ -283,7 +293,12 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
   let window = window_builder.build();
 
   factory.connect_setup(move |_, list_item| {
-    let button = Button::builder().build();
+    let button = Button::builder()
+      .halign(Align::Fill)
+      .valign(Align::Fill)
+      .vexpand(true)
+      .vexpand_set(true)
+      .build();
     list_item.set_child(Some(&button));
   });
   factory.connect_bind(move |_, list_item| {
@@ -306,7 +321,20 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
       .downcast::<Button>()
       .expect("The child must be a `Button`!");
 
-    button.set_label(&format!("{} - {}", item_name, item_cost));
+    let attribute_list = AttrList::new();
+    attribute_list.insert(AttrSize::new(pango::SCALE * 13));
+
+    button.set_child(Some(
+      &Label::builder()
+        .halign(Align::Fill)
+        .vexpand(true)
+        .vexpand_set(true)
+        .attributes(&attribute_list)
+        .margin_top(8)
+        .margin_bottom(8)
+        .label(&format!("{} - {}", item_name, item_cost))
+        .build(),
+    ));
 
     button.connect_clicked(move |_button| {
       let conn_str = conn_str.clone();
@@ -408,7 +436,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     });
   });
 
-  let info_box = CenterBox::builder().hexpand(true).build();
+  let info_box = CenterBox::builder().vexpand(true).build();
 
   ordering_rx.attach(
     None,
@@ -421,12 +449,25 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
               .orientation(Orientation::Vertical)
               .valign(Align::Center)
               .build();
+            let attribute_list = AttrList::new();
+            attribute_list.insert(AttrSize::new(pango::SCALE * 18));
             please_scan.append(&Label::builder()
                                .label("Please scan your tag!")
+                               .attributes(&attribute_list)
                                .margin_bottom(20)
                                .build());
             let cancel_button = Button::builder()
-              .label("Cancel")
+              .child(
+                &Label::builder()
+                  .halign(Align::Fill)
+                  .vexpand(true)
+                  .vexpand_set(true)
+                  .attributes(&attribute_list)
+                  .margin_top(8)
+                  .margin_bottom(8)
+                  .label("Cancel")
+                  .build(),
+              )
               .build();
             please_scan.append(&cancel_button);
             cancel_button.connect_clicked(move |_button| {
