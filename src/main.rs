@@ -480,9 +480,13 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           OrderingState::Vending(content) |
           OrderingState::Failed(content) |
           OrderingState::Dropped(content) => {
+            let attribute_list = AttrList::new();
+            attribute_list.insert(AttrSize::new(pango::SCALE * 18));
+
             info_box.set_center_widget(
               Some(&Label::builder()
                    .label(&content)
+                   .attributes(&attribute_list)
                    .build())
             );
           },
