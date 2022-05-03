@@ -12,6 +12,7 @@ use gtk::subclass::prelude::*;
 use gtk::{
   gio, glib, Align, Application, ApplicationWindow, Box, Button, CenterBox, GridView, Label,
   Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, NoSelection,
+  Revealer
 };
 use libgatekeeper_sys::Nfc;
 use pango::{AttrList, AttrSize};
@@ -112,10 +113,10 @@ glib::wrapper! {
 }
 
 impl SlotObject {
-  pub fn from_slot(machine: &Machine, slot: &Slot) -> Self {
+  pub fn from_slot(machine_name: &str, slot: &Slot) -> Self {
     Object::new(&[
       ("slot", &slot.number),
-      ("machine", &machine.name.to_string()),
+      ("machine", &machine_name),
       ("name", &slot.item.name),
       ("cost", &slot.item.price),
     ])
@@ -193,6 +194,14 @@ pub struct Item {
   price: i64,
 }
 
+struct MachineView {
+  slot_model: gio::ListStore,
+  label: Label,
+  selection_model: NoSelection,
+  grid: GridView,
+  revealer: Revealer,
+}
+
 fn build_ui(app: &Application, conn_str: std::string::String) {
   let displayable_machines: Vec<i64> = env::var("DISPLAYABLE_MACHINES")
     .unwrap()
@@ -201,7 +210,60 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     .map(|id| id.parse::<i64>().unwrap())
     .collect();
   let endpoint = "https://drink.csh.rit.edu";
-  let drink_model = gio::ListStore::new(SlotObject::static_type());
+
+  let factory = SignalListItemFactory::new();
+
+  let machine_views = {
+    let attribute_list = AttrList::new();
+    attribute_list.insert(AttrSize::new(pango::SCALE * 18));
+    displayable_machines
+      .iter()
+      .map(|index| {
+        let label = Label::builder()
+          .attributes(&attribute_list)
+          .margin_top(8)
+          .margin_bottom(8)
+          .label(&format!("Unknown Machine {}", index))
+          .build();
+        let slot_model = gio::ListStore::new(SlotObject::static_type());
+        let selection_model = NoSelection::new(Some(&slot_model));
+        let grid = GridView::builder()
+          .model(&selection_model)
+          .factory(&factory)
+          .max_columns(3)
+          .min_columns(3)
+          .margin_top(16)
+          .margin_bottom(16)
+          .margin_start(16)
+          .margin_end(16)
+          .build();
+
+        let machine_box = Box::builder()
+          .orientation(Orientation::Vertical)
+          .build();
+        machine_box.append(&label);
+        machine_box.append(&grid);
+
+        let revealer = Revealer::builder()
+          .child(&machine_box)
+          .build();
+
+        return MachineView {
+          label,
+          slot_model,
+          selection_model,
+          grid,
+          revealer,
+        }
+      })
+      .collect::<Vec<MachineView>>()
+  };
+  let elements = Box::builder()
+    .orientation(Orientation::Vertical)
+    .build();
+  for machine_view in &machine_views {
+    elements.append(&machine_view.revealer);
+  }
   let (drinks_tx, drinks_rx) = MainContext::channel(PRIORITY_DEFAULT);
   let (ordering_tx, ordering_rx) = MainContext::channel(PRIORITY_DEFAULT);
   let (poll_tx, poll_rx) = mpsc::channel();
@@ -234,45 +296,33 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
 
   drinks_rx.attach(
     None,
-    clone!(
-      @weak drink_model => @default-return Continue(false),
-      move |res| {
-        let slot_objects = res.machines.iter()
-          .filter(|machine| displayable_machines.contains(&machine.id) &&
-                  machine.is_online)
-          .flat_map(|machine| machine.slots
-                    .iter()
-                    .filter(|slot| slot.active &&
-                            !slot.empty &&
-                            slot.count.map_or(true, |count| count > 0))
-                    .map(|slot| SlotObject::from_slot(machine, slot)))
-          .collect::<Vec<SlotObject>>();
-
-        drink_model.splice(0, drink_model.n_items(), &slot_objects);
-        Continue(true)
+    move |res| {
+      for machine in res.machines {
+        if let Some(machine_index) = displayable_machines.iter().position(|&id| machine.id == id) {
+          let slot_objects = machine.slots.into_iter()
+            .filter(|slot| slot.active && !slot.empty &&
+                    slot.count.map_or(true, |count| count > 0))
+            .map(|slot| SlotObject::from_slot(&machine.name, &slot))
+            .collect::<Vec<SlotObject>>();
+          let views = &machine_views[machine_index];
+          views.slot_model.splice(
+            0,
+            views.slot_model.n_items(),
+            &slot_objects
+          );
+          views.label.set_label(&machine.display_name);
+          views.revealer.set_reveal_child(slot_objects.len() > 0);
+        }
       }
-    ),
+      Continue(true)
+    }
   );
-
-  let factory = SignalListItemFactory::new();
-
-  let selection_model = NoSelection::new(Some(&drink_model));
-  let drink_list = GridView::builder()
-    .model(&selection_model)
-    .factory(&factory)
-    .max_columns(3)
-    .vexpand(true)
-    .vexpand_set(true)
-    .valign(Align::Fill)
-    .build();
 
   let scrolled_window = ScrolledWindow::builder()
     .hscrollbar_policy(PolicyType::Never) // Disable horizontal scrolling
     .min_content_width(360)
-    .vexpand(true)
-    .vexpand_set(true)
     .valign(Align::Fill)
-    .child(&drink_list)
+    .child(&elements)
     .build();
 
   // Create a window and set the title
@@ -280,8 +330,6 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     .application(app)
     .title("Mineral")
     .child(&scrolled_window)
-    .vexpand(true)
-    .vexpand_set(true)
     .valign(Align::Fill)
     .maximized(true);
   if !env::var("DEVELOPMENT")
@@ -294,10 +342,6 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
 
   factory.connect_setup(move |_, list_item| {
     let button = Button::builder()
-      .halign(Align::Fill)
-      .valign(Align::Fill)
-      .vexpand(true)
-      .vexpand_set(true)
       .build();
     list_item.set_child(Some(&button));
   });
@@ -327,8 +371,6 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     button.set_child(Some(
       &Label::builder()
         .halign(Align::Fill)
-        .vexpand(true)
-        .vexpand_set(true)
         .attributes(&attribute_list)
         .margin_top(8)
         .margin_bottom(8)
@@ -436,7 +478,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     });
   });
 
-  let info_box = CenterBox::builder().vexpand(true).build();
+  let info_box = CenterBox::builder().build();
 
   ordering_rx.attach(
     None,
@@ -460,8 +502,6 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
               .child(
                 &Label::builder()
                   .halign(Align::Fill)
-                  .vexpand(true)
-                  .vexpand_set(true)
                   .attributes(&attribute_list)
                   .margin_top(8)
                   .margin_bottom(8)
