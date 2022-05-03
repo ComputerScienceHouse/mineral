@@ -11,8 +11,8 @@ use gtk::subclass::prelude::ObjectSubclass;
 use gtk::subclass::prelude::*;
 use gtk::{
   gio, glib, Align, Application, ApplicationWindow, Box, Button, CenterBox, GridView, Label,
-  Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, NoSelection,
-  Revealer
+  NoSelection, Orientation, PolicyType, Revealer, ScrolledWindow, SignalListItemFactory,
+  CssProvider, StyleContext, gdk::Display
 };
 use libgatekeeper_sys::Nfc;
 use pango::{AttrList, AttrSize};
@@ -136,6 +136,7 @@ fn main() {
     app.activate();
     0
   });
+  app.connect_startup(|_| load_css());
   // Connect to "activate" signal of `app`
   app.connect_activate(move |app: &Application| {
     let command = clap::Command::new("Mineral")
@@ -156,6 +157,19 @@ fn main() {
   });
   // Run the application
   app.run();
+}
+
+fn load_css() {
+  // Load the CSS file and add it to the provider
+  let provider = CssProvider::new();
+  provider.load_from_data(include_bytes!("style.css"));
+  
+  // Add the provider to the default screen
+  StyleContext::add_provider_for_display(
+    &Display::default().expect("Could not connect to a display."),
+    &provider,
+    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+  );
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -238,15 +252,11 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           .margin_end(16)
           .build();
 
-        let machine_box = Box::builder()
-          .orientation(Orientation::Vertical)
-          .build();
+        let machine_box = Box::builder().orientation(Orientation::Vertical).build();
         machine_box.append(&label);
         machine_box.append(&grid);
 
-        let revealer = Revealer::builder()
-          .child(&machine_box)
-          .build();
+        let revealer = Revealer::builder().child(&machine_box).build();
 
         return MachineView {
           label,
@@ -254,13 +264,11 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           selection_model,
           grid,
           revealer,
-        }
+        };
       })
       .collect::<Vec<MachineView>>()
   };
-  let elements = Box::builder()
-    .orientation(Orientation::Vertical)
-    .build();
+  let elements = Box::builder().orientation(Orientation::Vertical).build();
   for machine_view in &machine_views {
     elements.append(&machine_view.revealer);
   }
@@ -294,29 +302,25 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     }
   });
 
-  drinks_rx.attach(
-    None,
-    move |res| {
-      for machine in res.machines {
-        if let Some(machine_index) = displayable_machines.iter().position(|&id| machine.id == id) {
-          let slot_objects = machine.slots.into_iter()
-            .filter(|slot| slot.active && !slot.empty &&
-                    slot.count.map_or(true, |count| count > 0))
-            .map(|slot| SlotObject::from_slot(&machine.name, &slot))
-            .collect::<Vec<SlotObject>>();
-          let views = &machine_views[machine_index];
-          views.slot_model.splice(
-            0,
-            views.slot_model.n_items(),
-            &slot_objects
-          );
-          views.label.set_label(&machine.display_name);
-          views.revealer.set_reveal_child(slot_objects.len() > 0);
-        }
+  drinks_rx.attach(None, move |res| {
+    for machine in res.machines {
+      if let Some(machine_index) = displayable_machines.iter().position(|&id| machine.id == id) {
+        let slot_objects = machine
+          .slots
+          .into_iter()
+          .filter(|slot| slot.active && !slot.empty && slot.count.map_or(true, |count| count > 0))
+          .map(|slot| SlotObject::from_slot(&machine.name, &slot))
+          .collect::<Vec<SlotObject>>();
+        let views = &machine_views[machine_index];
+        views
+          .slot_model
+          .splice(0, views.slot_model.n_items(), &slot_objects);
+        views.label.set_label(&machine.display_name);
+        views.revealer.set_reveal_child(slot_objects.len() > 0);
       }
-      Continue(true)
     }
-  );
+    Continue(true)
+  });
 
   let scrolled_window = ScrolledWindow::builder()
     .hscrollbar_policy(PolicyType::Never) // Disable horizontal scrolling
@@ -341,8 +345,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
   let window = window_builder.build();
 
   factory.connect_setup(move |_, list_item| {
-    let button = Button::builder()
-      .build();
+    let button = Button::builder().build();
     list_item.set_child(Some(&button));
   });
   factory.connect_bind(move |_, list_item| {
@@ -368,15 +371,30 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
     let attribute_list = AttrList::new();
     attribute_list.insert(AttrSize::new(pango::SCALE * 13));
 
-    button.set_child(Some(
+    let item_box = CenterBox::builder().build();
+
+    item_box.set_center_widget(Some(
       &Label::builder()
         .halign(Align::Fill)
         .attributes(&attribute_list)
-        .margin_top(8)
-        .margin_bottom(8)
-        .label(&format!("{} - {}", item_name, item_cost))
+        // .margin_top(8)
+        // .margin_bottom(8)
+        .label(&item_name)
         .build(),
     ));
+
+    item_box.set_end_widget(Some(
+      &Label::builder()
+        .halign(Align::Fill)
+        .attributes(&attribute_list)
+        // .margin_top(8)
+        // .margin_bottom(8)
+        .label(&format!("{}", item_cost))
+        .css_classes(vec!["item-cost".to_string()])
+        .build(),
+    ));
+
+    button.set_child(Some(&item_box));
 
     button.connect_clicked(move |_button| {
       let conn_str = conn_str.clone();
