@@ -389,7 +389,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
         .attributes(&attribute_list)
         // .margin_top(8)
         // .margin_bottom(8)
-        .label(&format!("{}", item_cost))
+        .label(&format!("{}cr", item_cost))
         .css_classes(vec!["item-cost".to_string()])
         .build(),
     ));
