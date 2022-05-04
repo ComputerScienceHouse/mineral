@@ -249,7 +249,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           .margin_top(16)
           .margin_bottom(16)
           .margin_start(16)
-          .margin_end(16)
+          .margin_end(64)
           .build();
 
         let machine_box = Box::builder().orientation(Orientation::Vertical).build();
