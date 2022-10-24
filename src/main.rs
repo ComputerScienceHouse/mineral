@@ -10,9 +10,9 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::ObjectSubclass;
 use gtk::subclass::prelude::*;
 use gtk::{
-  gio, glib, Align, Application, ApplicationWindow, Box, Button, CenterBox, GridView, Label,
-  NoSelection, Orientation, PolicyType, Revealer, ScrolledWindow, SignalListItemFactory,
-  CssProvider, StyleContext, gdk::Display
+  gdk::Display, gio, glib, Align, Application, ApplicationWindow, Box, Button, CenterBox,
+  CssProvider, GridView, Label, NoSelection, Orientation, PolicyType, Revealer, ScrolledWindow,
+  SignalListItemFactory, StyleContext,
 };
 use libgatekeeper_sys::Nfc;
 use pango::{AttrList, AttrSize};
@@ -163,7 +163,7 @@ fn load_css() {
   // Load the CSS file and add it to the provider
   let provider = CssProvider::new();
   provider.load_from_data(include_bytes!("style.css"));
-  
+
   // Add the provider to the default screen
   StyleContext::add_provider_for_display(
     &Display::default().expect("Could not connect to a display."),
@@ -211,16 +211,13 @@ pub struct Item {
 struct MachineView {
   slot_model: gio::ListStore,
   label: Label,
-  selection_model: NoSelection,
-  grid: GridView,
   revealer: Revealer,
 }
 
 fn build_ui(app: &Application, conn_str: std::string::String) {
   let displayable_machines: Vec<i64> = env::var("DISPLAYABLE_MACHINES")
     .unwrap()
-    .to_string()
-    .split(",")
+    .split(',')
     .map(|id| id.parse::<i64>().unwrap())
     .collect();
   let endpoint = "https://drink.csh.rit.edu";
@@ -258,13 +255,11 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
 
         let revealer = Revealer::builder().child(&machine_box).build();
 
-        return MachineView {
+        MachineView {
           label,
           slot_model,
-          selection_model,
-          grid,
           revealer,
-        };
+        }
       })
       .collect::<Vec<MachineView>>()
   };
@@ -277,13 +272,13 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
   let (poll_tx, poll_rx) = mpsc::channel();
 
   thread::spawn(move || {
-    let secret = env::var("MACHINE_SECRET").unwrap().to_string();
+    let secret = env::var("MACHINE_SECRET").unwrap();
     let http = reqwest::blocking::Client::new();
     loop {
       println!("Trying to get drink list...");
       // Get new soda!
       let drinks = http
-        .get(endpoint.clone().to_owned() + "/drinks")
+        .get(endpoint.to_owned() + "/drinks")
         .header("X-Auth-Token", secret.clone())
         .send();
       println!("Got updated drink list!");
@@ -296,7 +291,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
       }
 
       let one_minute = Duration::from_secs(60);
-      if let Ok(_) = poll_rx.recv_timeout(one_minute) {
+      if poll_rx.recv_timeout(one_minute).is_ok() {
         println!("Expediting drink fetch because a drink was dropped!");
       }
     }
@@ -316,7 +311,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           .slot_model
           .splice(0, views.slot_model.n_items(), &slot_objects);
         views.label.set_label(&machine.display_name);
-        views.revealer.set_reveal_child(slot_objects.len() > 0);
+        views.revealer.set_reveal_child(!slot_objects.is_empty());
       }
     }
     Continue(true)
@@ -400,7 +395,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
       let conn_str = conn_str.clone();
       let machine_id = machine_id.clone();
       let item_name = item_name.clone();
-      let item_cost = item_cost.clone();
+      let item_cost = item_cost;
       let ordering_tx = ordering_tx.clone();
       thread::spawn(move || {
         let (cancel_tx, cancel_rx) = mpsc::channel();
@@ -419,7 +414,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
             if let Some(association) = member_listener.poll_for_user() {
               break association;
             }
-            if let Ok(_) = cancel_rx.recv_timeout(Duration::from_millis(250)) {
+            if cancel_rx.recv_timeout(Duration::from_millis(250)).is_ok() {
               ordering_tx.send(OrderingState::Finished(false)).unwrap();
               return;
             }
@@ -439,12 +434,12 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           .send(OrderingState::Vending(format!("Dropping {}...", item_name)))
           .unwrap();
 
-        let secret = env::var("MACHINE_SECRET").unwrap().to_string();
+        let secret = env::var("MACHINE_SECRET").unwrap();
         let http = reqwest::blocking::Client::new();
         println!("Dropping a drink!");
         let res = http
-          .post(endpoint.clone().to_owned() + "/drinks/drop")
-          .header("X-Auth-Token", secret.clone())
+          .post(endpoint.to_owned() + "/drinks/drop")
+          .header("X-Auth-Token", secret)
           .header(
             "X-User-Info",
             &json!({
@@ -453,7 +448,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
             .to_string(),
           )
           .json(&json!({
-            "machine": machine_id.clone(),
+            "machine": machine_id,
             "slot": slot_id,
           }))
           .send();
@@ -533,7 +528,7 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
             });
             info_box.set_center_widget(Some(&please_scan));
             window.set_child(Some(&info_box));
-            ()
+
           },
           OrderingState::Vending(content) |
           OrderingState::Failed(content) |
