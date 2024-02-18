@@ -3,7 +3,7 @@ use crate::glib::{
   PRIORITY_DEFAULT,
 };
 use clap::Arg;
-use gatekeeper_members::{GateKeeperMemberListener, RealmInfo};
+use gatekeeper_members::{GateKeeperMemberListener, RealmType};
 use gio::ApplicationFlags;
 use glib::object::Object;
 use gtk::prelude::*;
@@ -14,7 +14,6 @@ use gtk::{
   CssProvider, GridView, Label, NoSelection, Orientation, PolicyType, Revealer, ScrolledWindow,
   SignalListItemFactory, StyleContext,
 };
-use libgatekeeper_sys::Nfc;
 use pango::{AttrList, AttrSize};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -404,10 +403,8 @@ fn build_ui(app: &Application, conn_str: std::string::String) {
           .unwrap();
         println!("Starting an order");
 
-        let mut nfc = Nfc::new().unwrap();
         let mut member_listener =
-          GateKeeperMemberListener::new_for_realm(&mut nfc, conn_str.to_string(), RealmInfo::Drink)
-            .unwrap();
+          GateKeeperMemberListener::new(conn_str.to_string(), RealmType::Drink).unwrap();
 
         let uid = loop {
           let association = loop {

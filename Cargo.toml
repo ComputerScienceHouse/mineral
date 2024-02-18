@@ -7,11 +7,8 @@ edition = "2021"
 
 [dependencies]
 clap = "3.1.0"
-gatekeeper-members = "0.3.0"
-#gatekeeper-members = { path = "../gatekeeper-members" }
+gatekeeper-members = "0.4.0"
 gtk = { version = "0.4.6", package = "gtk4" }
-libgatekeeper-sys = "0.4.0"
-#libgatekeeper-sys = { path = "../libgatekeeper-sys" }
 once_cell = "1.9.0"
 pango = "0.15.6"
 reqwest = {version = "0.11.9", features = ["blocking", "json"]}
